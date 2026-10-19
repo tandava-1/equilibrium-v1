@@ -40,10 +40,6 @@ export function metrics(records) {
       : null,
     recoveryRange: nums.length ? [nums[0], nums.at(-1)] : null,
     repairBreakdown: repairBreakdown(records),
-    constructive: rate(
-      records.filter((r) => r.kind !== "sos" && r.responseGoal?.trim()),
-      "goalMet",
-    ),
     awareness: rate(records, "recognizedTrigger"),
     pause: rate(records, "pauseAttempted"),
     escalation: rate(records, "harmfulBehavior"),

@@ -75,8 +75,7 @@ let state = {
   lesson: null,
 };
 let breathing = null,
-  recognition = null,
-  breathSeconds = 0;
+  recognition = null;
 try {
   state.demo = sessionStorage.getItem("equilibrium.demo") === "true";
 } catch {}
@@ -169,7 +168,6 @@ function layout(content) {
 function heading(title, sub, eyebrow = "YOUR PERSONAL SPACE") {
   return `<div class="heading"><div><div class="eyebrow">${eyebrow}</div><h1>${title}</h1><p class="subtitle">${sub}</p></div><div class="date-badge">${icon("calendar")}${new Date().toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</div></div>`;
 }
-const pct = (m) => (m.percent === null ? "—" : `${m.percent}%`);
 function stat(label, value, foot, ic = "leaf") {
   return `<div class="stat"><div class="stat-label">${icon(ic)}${label}</div><div class="stat-value">${value}</div><div class="stat-foot">${foot}</div></div>`;
 }
