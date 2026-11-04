@@ -1,0 +1,14 @@
+{
+  "name": "Equilibrium",
+  "short_name": "Equilibrium",
+  "description": "Daily targets, nightly learnings and a little space between feeling and responding. Local-only.",
+  "start_url": "./#/today",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f8f4",
+  "theme_color": "#315c49",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

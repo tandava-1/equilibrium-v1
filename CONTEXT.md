@@ -2,7 +2,7 @@
 
 ## Current state
 
-_Last updated 2026-11-04 08:09 IST by Claude Code · cloud session_
+_Last updated 2026-11-04 08:15 IST by Claude Code · cloud session_
 
 **What it is.** A local-only reflection app for noticing and handling
 triggered moments. An "I'm triggered" SOS entry (scripts, one-minute
@@ -29,7 +29,9 @@ Two front ends:
   Simulator tests pass; physical device and TestFlight untested. **Not yet
   committed** (see below).
 
-GitHub: `tandava-1/equilibrium-v1` (private). Built in
+GitHub: `tandava-1/equilibrium-v1` (owner is making it public, 2026-11-04).
+Live web app via GitHub Pages: https://tandava-1.github.io/equilibrium-v1/
+(deployed from `main` by `.github/workflows/pages.yml`). Built in
 `~/Codex/equilibrium-v1`; moved to `~/Claude/equilibrium-v1` on 2026-10-31.
 `~/Claude/_archive/equilibrium` is an older no-remote copy (1 local commit,
 "Update Site source", 2026-10-15).
@@ -130,3 +132,17 @@ page-scheduled with a 3-hour late window, and carry no personal text.
 Unreviewed targets stay null and are never carried over as "not done".
 Typed lines can be added as written; only extracted splits need confirmation.
 **Next:** See "Next" above.
+
+### 2026-11-04 08:15 IST — Claude Code · cloud session
+**Changed:** Made `dist/` work from a sub-path (relative asset, service
+worker and notification URLs), added the CSP as a `<meta>` tag because Pages
+cannot send headers, added a web app manifest and icons, and added the Pages
+deploy workflow (runs `npm test` first). Merged `feat/today-targets` into
+`main`.
+**Decided:** The owner chose a GitHub Pages web app over extending the iOS
+app. Making the repo public and turning on Pages (Source: GitHub Actions)
+must be done by the owner in repository settings; the session has no tool
+for either.
+**Next:** Owner makes the repo public and enables Pages; re-run the deploy
+workflow; try the mic and notifications on the live site.
+

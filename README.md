@@ -2,7 +2,13 @@
 
 Mobile-first local reflection app, updated from the Equilibrium UX handoff and its capture, SOS and progress mockups.
 
-## Run
+## Use it online
+
+https://tandava-1.github.io/equilibrium-v1/ — published from `main` by `.github/workflows/pages.yml` (tests must pass first). The site is static: your entries stay in your browser and are never sent to GitHub. On a phone, add it to the Home Screen to use it like an app; iPhones only allow web notifications for Home Screen apps.
+
+Browser storage belongs to the site's origin, `tandava-1.github.io`, which every GitHub Pages project under this account shares. A different project published there could read Equilibrium's local data, so only publish sites you trust under this account. Data from the local server (`127.0.0.1:4173`) and the online site is separate; move it with export/import.
+
+## Run locally
 
 Requires Node.js 18+. No packages, account or API key required.
 

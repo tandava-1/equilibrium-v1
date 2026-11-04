@@ -932,7 +932,7 @@ function registerWorker() {
   if (!navigator.serviceWorker || !window.isSecureContext) return;
   try {
     navigator.serviceWorker
-      .register("/sw.js")
+      .register("./sw.js")
       .then((r) => (swRegistration = r))
       .catch(() => {});
     navigator.serviceWorker.addEventListener("message", (e) => {
@@ -944,7 +944,7 @@ async function deliver(n) {
   const options = {
     body: n.body,
     tag: "equilibrium-" + n.type,
-    data: { url: "/#/today" },
+    data: { url: new URL("#/today", location.href).href },
   };
   try {
     const reg =

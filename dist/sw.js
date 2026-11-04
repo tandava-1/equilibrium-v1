@@ -7,7 +7,7 @@ self.addEventListener("activate", (event) =>
 );
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = event.notification.data?.url || "/#/today";
+  const url = event.notification.data?.url || self.registration.scope + "#/today";
   event.waitUntil(
     (async () => {
       const windows = await self.clients.matchAll({

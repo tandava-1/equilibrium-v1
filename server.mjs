@@ -10,8 +10,18 @@ const files = {
   "/daily.js": "daily.js",
   "/messages.js": "messages.js",
   "/sw.js": "sw.js",
+  "/manifest.webmanifest": "manifest.webmanifest",
+  "/icon-192.png": "icon-192.png",
+  "/icon-512.png": "icon-512.png",
+  "/apple-touch-icon.png": "apple-touch-icon.png",
 };
-const types = { html: "text/html", js: "text/javascript", css: "text/css" };
+const types = {
+  html: "text/html; charset=utf-8",
+  js: "text/javascript; charset=utf-8",
+  css: "text/css; charset=utf-8",
+  webmanifest: "application/manifest+json; charset=utf-8",
+  png: "image/png",
+};
 createServer(async (req, res) => {
   const file = files[new URL(req.url, "http://localhost").pathname];
   if (!file) {
@@ -21,7 +31,7 @@ createServer(async (req, res) => {
   try {
     const body = await readFile(new URL(`./dist/${file}`, import.meta.url));
     res.writeHead(200, {
-      "Content-Type": `${types[file.split(".").pop()]}; charset=utf-8`,
+      "Content-Type": types[file.split(".").pop()],
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "no-referrer",
       "Content-Security-Policy":
