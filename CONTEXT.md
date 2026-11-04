@@ -29,7 +29,7 @@ Two front ends:
   Simulator tests pass; physical device and TestFlight untested. **Not yet
   committed** (see below).
 
-GitHub: `tandava-1/equilibrium-v1` (owner is making it public, 2026-11-04).
+GitHub: `tandava-1/equilibrium-v1` (public since 2026-11-04).
 Live web app via GitHub Pages: https://tandava-1.github.io/equilibrium-v1/
 (deployed from `main` by `.github/workflows/pages.yml`). Built in
 `~/Codex/equilibrium-v1`; moved to `~/Claude/equilibrium-v1` on 2026-10-31.
@@ -143,6 +143,8 @@ deploy workflow (runs `npm test` first). Merged `feat/today-targets` into
 app. Making the repo public and turning on Pages (Source: GitHub Actions)
 must be done by the owner in repository settings; the session has no tool
 for either.
-**Next:** Owner makes the repo public and enables Pages; re-run the deploy
-workflow; try the mic and notifications on the live site.
+**Next:** Owner made the repo public and enabled Pages; the first
+successful deploy ran 2026-11-04 11:41 UTC. Try the mic and notifications on
+the live site (not verifiable from the cloud session: github.io is blocked
+by its network policy).
 
