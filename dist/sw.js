@@ -14,7 +14,11 @@ self.addEventListener("notificationclick", (event) => {
         type: "window",
         includeUncontrolled: true,
       });
-      const client = windows[0];
+      // includeUncontrolled lists every window on the origin, and on
+      // github.io that includes other Pages sites under the same account.
+      const client = windows.find((c) =>
+        c.url.startsWith(self.registration.scope),
+      );
       if (client) {
         await client.focus();
         client.postMessage({ type: "open-today" });
