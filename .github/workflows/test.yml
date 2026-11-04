@@ -14,4 +14,4 @@ jobs:
         with:
           node-version: 22
       - run: npm test
-      - run: node --check dist/app.js && node --check server.mjs
+      - run: node --check dist/app.js && node --check dist/sw.js && node --check server.mjs

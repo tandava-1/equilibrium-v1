@@ -7,6 +7,9 @@ const files = {
   "/styles.css": "styles.css",
   "/model.js": "model.js",
   "/ai.js": "ai.js",
+  "/daily.js": "daily.js",
+  "/messages.js": "messages.js",
+  "/sw.js": "sw.js",
 };
 const types = { html: "text/html", js: "text/javascript", css: "text/css" };
 createServer(async (req, res) => {

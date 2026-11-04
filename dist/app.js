@@ -16,6 +16,27 @@ import {
   FIELD_LABELS,
 } from "./model.js";
 import { extractIncidentStub } from "./ai.js";
+import {
+  emptyDay,
+  dayStatus,
+  shiftDate,
+  normalize,
+  splitTargets,
+  splitLines,
+  sortReflection,
+  carryOver,
+  dailyMessage,
+  dueNotifications,
+  defaultNotificationSettings,
+  normalizeSettings,
+  mergeSent,
+  pruneSent,
+  validateDays,
+  mergeDays,
+  sampleDays,
+  TIME_RE,
+  LATE_WINDOW_MINUTES,
+} from "./daily.js";
 const $ = (s) => document.querySelector(s),
   esc = (s) =>
     String(s ?? "").replace(
@@ -48,21 +69,48 @@ const icons = {
   pause: "M9 5v14m6-14v14",
   download: "M12 3v12m-5-5 5 5 5-5M4 17v4h16v-4",
   spark: "m12 3 3 6 6 3-6 3-3 6-3-6-6-3 6-3z",
+  target:
+    "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18Zm0 4a5 5 0 1 0 0 10 5 5 0 0 0 0-10Zm0 4a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z",
+  moon: "M20 14A8 8 0 1 1 10 4a6.5 6.5 0 0 0 10 10Z",
+  bell: "M6 9a6 6 0 0 1 12 0c0 6 3 8 3 8H3s3-2 3-8M10 21a2 2 0 0 0 4 0",
+  close: "M6 6l12 12M18 6 6 18",
 };
 const icon = (name) =>
   `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icons[name] || icons.leaf}"/></svg>`;
 const STORAGE = "equilibrium.local.v1";
 let storageError = false;
-let data = { records: [], checkins: [], goal: "", practice: "" };
+const freshData = () => ({
+  schemaVersion: 2,
+  records: [],
+  checkins: [],
+  goal: "",
+  practice: "",
+  days: {},
+  notifications: defaultNotificationSettings(),
+});
+function loadData(saved) {
+  const out = { ...freshData(), ...saved };
+  out.records = out.records.map(migrateRecord);
+  out.schemaVersion = 2;
+  // Keep each readable day; drop (and flag) any entry that fails validation.
+  out.days = {};
+  for (const [date, day] of Object.entries(saved.days || {}))
+    try {
+      Object.assign(out.days, validateDays({ [date]: day }));
+    } catch {
+      storageError = true;
+    }
+  out.notifications = normalizeSettings(saved.notifications);
+  return out;
+}
+let data = freshData();
 try {
   const saved = JSON.parse(localStorage.getItem(STORAGE) || "null");
   if (saved && Array.isArray(saved.records) && Array.isArray(saved.checkins))
-    data = { ...data, ...saved };
+    data = loadData(saved);
 } catch {
   storageError = true;
 }
-data.records = data.records.map(migrateRecord);
-data.schemaVersion = 2;
 let state = {
   page: "home",
   demo: false,
@@ -73,7 +121,25 @@ let state = {
   step: 1,
   detail: null,
   lesson: null,
+  sampleDays: sampleDays(localDate()),
+  todayDate: localDate(),
+  today: {
+    date: localDate(),
+    targetText: "",
+    reflectText: "",
+    targetSource: "text",
+    reflectSource: "text",
+    targetProposals: [],
+    reflectProposals: [],
+  },
+  listening: null,
 };
+try {
+  const saved = JSON.parse(sessionStorage.getItem("equilibrium.today.v1"));
+  if (saved?.date === localDate())
+    for (const k of ["targetText", "reflectText", "targetSource", "reflectSource"])
+      if (typeof saved[k] === "string") state.today[k] = saved[k];
+} catch {}
 let breathing = null,
   recognition = null;
 try {
@@ -124,6 +190,7 @@ function navigate(page, opts = {}) {
               ? state.draft?.id
               : null),
       step: opts.step ?? state.step,
+      date: opts.date,
     });
     window.history.pushState(null, "", hash);
     applyRoute();
@@ -158,6 +225,7 @@ function modal(title, body, button, callback, danger = false) {
 function layout(content) {
   const nav = [
     ["home", "home", "Home"],
+    ["today", "target", "Today"],
     ["history", "book", "Reflect"],
     ["sos", "pause", "SOS"],
     ["progress", "chart", "Progress"],
@@ -187,7 +255,7 @@ function home() {
       "A little space between feeling and acting.",
       "YOUR DAILY SPACE",
     ) +
-    `<div class="hero-grid"><button class="sos-entry" data-nav="sos"><span><strong>I’m triggered</strong><small>Get space right now</small></span><span class="sos-symbol">${icon("pause")}</span></button><section class="hero"><div class="eyebrow">AFTERWARDS</div><h2>Something happened?</h2><p>Say it however it comes out.<br>We’ll take it one moment at a time.</p><button class="btn" data-action="new">${icon("mic")}Tell me what happened ${icon("arrow")}</button></section></div>${!state.demo && data.goal ? `<p class="intention">This week: <strong>${esc(data.goal)}</strong></p>` : ""}<div class="section-heading"><h2>Your week</h2><button class="text-button" data-nav="progress">${plural(week.length, "episode")} ${icon("arrow")}</button></div><div class="stats">${stat("Constructive responses", n.met + n.notMet ? `${n.met} <small>of ${n.met + n.notMet}</small>` : "—", `${n.met + n.notMet ? Math.round((n.met / (n.met + n.notMet)) * 100) + "% · " : ""}${n.noGoal} no goal · ${n.unknown} unanswered`)}${stat("Paused deliberately", m.pause.total ? `${m.pause.yes} <small>of ${m.pause.total}</small>` : "—", `${m.pause.missing} unanswered`, "pause")}${stat("Recovery time", m.recoveryMedian == null ? "—" : `${m.recoveryMedian} <small>min</small>`, `Median · ${m.recoveryCount} of ${week.length} reported`, "clock")}</div><div class="bottom-grid"><section><div class="section-heading"><h2>Recent moments</h2><button class="text-button" data-nav="history">View all ${icon("arrow")}</button></div><div class="card">${sorted().length ? sorted().slice(0, 3).map(row).join("") : empty()}</div></section><section><div class="section-heading"><h2>A small thing to try</h2><span class="tag">2 MIN</span></div><div class="card lesson"><h3>A pause is a choice,<br>not a retreat.</h3><p>Make room for your feelings and choose what comes next.</p><button class="text-button" data-lesson="pause">Explore the pause ${icon("arrow")}</button></div></section></div><div class="checkin"><div><strong>A gentle daily check-in</strong><p>Have you checked for moments you want to reflect on today?</p></div><button class="btn secondary" data-action="checkin" ${state.demo || data.checkins.includes(localDate()) ? "disabled" : ""}>${data.checkins.includes(localDate()) && !state.demo ? "Checked in" : "I’ve checked in"} ${icon("check")}</button></div><p class="footer-note">Fewer logs don’t mean fewer incidents. Every moment of awareness counts.</p>`
+    `<div class="hero-grid"><button class="sos-entry" data-nav="sos"><span><strong>I’m triggered</strong><small>Get space right now</small></span><span class="sos-symbol">${icon("pause")}</span></button><section class="hero"><div class="eyebrow">AFTERWARDS</div><h2>Something happened?</h2><p>Say it however it comes out.<br>We’ll take it one moment at a time.</p><button class="btn" data-action="new">${icon("mic")}Tell me what happened ${icon("arrow")}</button></section></div>${todayStrip()}${!state.demo && data.goal ? `<p class="intention">This week: <strong>${esc(data.goal)}</strong></p>` : ""}<div class="section-heading"><h2>Your week</h2><button class="text-button" data-nav="progress">${plural(week.length, "episode")} ${icon("arrow")}</button></div><div class="stats">${stat("Constructive responses", n.met + n.notMet ? `${n.met} <small>of ${n.met + n.notMet}</small>` : "—", `${n.met + n.notMet ? Math.round((n.met / (n.met + n.notMet)) * 100) + "% · " : ""}${n.noGoal} no goal · ${n.unknown} unanswered`)}${stat("Paused deliberately", m.pause.total ? `${m.pause.yes} <small>of ${m.pause.total}</small>` : "—", `${m.pause.missing} unanswered`, "pause")}${stat("Recovery time", m.recoveryMedian == null ? "—" : `${m.recoveryMedian} <small>min</small>`, `Median · ${m.recoveryCount} of ${week.length} reported`, "clock")}</div><div class="bottom-grid"><section><div class="section-heading"><h2>Recent moments</h2><button class="text-button" data-nav="history">View all ${icon("arrow")}</button></div><div class="card">${sorted().length ? sorted().slice(0, 3).map(row).join("") : empty()}</div></section><section><div class="section-heading"><h2>A small thing to try</h2><span class="tag">2 MIN</span></div><div class="card lesson"><h3>A pause is a choice,<br>not a retreat.</h3><p>Make room for your feelings and choose what comes next.</p><button class="text-button" data-lesson="pause">Explore the pause ${icon("arrow")}</button></div></section></div><div class="checkin"><div><strong>A gentle daily check-in</strong><p>Have you checked for moments you want to reflect on today?</p></div><button class="btn secondary" data-action="checkin" ${state.demo || data.checkins.includes(localDate()) ? "disabled" : ""}>${data.checkins.includes(localDate()) && !state.demo ? "Checked in" : "I’ve checked in"} ${icon("check")}</button></div><p class="footer-note">Fewer logs don’t mean fewer incidents. Every moment of awareness counts.</p>`
   );
 }
 function history() {
@@ -439,9 +507,521 @@ function privacy() {
       "Understand what is stored and choose what stays.",
       "DATA & PRIVACY",
     ) +
-    `<div class="hint">Local MVP · No account or live AI connection. Text entries stay in this browser’s local storage unless you export them. Browser storage is not encrypted by this app and may be accessible to others using this browser profile.</div><div class="privacy-grid"><div class="card"><h2>Restore a backup</h2><p>Merge a JSON export into your data. Existing IDs are kept.</p><label for="import-file">Import a backup</label><input id="import-file" type="file" accept="application/json,.json"></div><div class="card"><h2>A quick introduction</h2><p>How reflection, voice and local storage work.</p><button class="btn secondary" data-action="intro">Replay introduction</button></div><div class="card"><h2>Take your data with you</h2><p>Export your personal reflections, check-ins, and practice notes as JSON. Sample reflections are excluded.</p><button class="btn secondary" data-action="export">${icon("download")}Export my data</button></div><div class="card"><h2>A fresh start</h2><p>Delete all personal data saved by Equilibrium in this browser. Export first if you want a copy.</p><button class="btn secondary" data-action="clear">Delete all my data</button></div><div class="card"><h2>Voice is your choice</h2><p>Voice capture uses your browser’s speech recognition service, which may send audio to its provider. Permission is requested before capture. Equilibrium retains the transcript only when you save the reflection, and never stores audio.</p></div><div class="card"><h2>Memory you can see</h2><p>Your saved reflections and practice intention are the only personal memory in this version. Edit or remove any reflection. There are no hidden personality labels or inferred diagnoses.</p></div></div><div class="card insight"><h2>A companion for reflection</h2><p>Equilibrium offers general reflection and practice tools. It does not diagnose, provide therapy, or establish clinical improvement. Your personal data is not backed up or synced; clearing browser storage removes it.</p></div>`
+    `<div class="hint">Local MVP · No account or live AI connection. Text entries stay in this browser’s local storage unless you export them. Browser storage is not encrypted by this app and may be accessible to others using this browser profile.</div><div class="privacy-grid"><div class="card"><h2>Restore a backup</h2><p>Merge a JSON export into your data. Existing IDs are kept.</p><label for="import-file">Import a backup</label><input id="import-file" type="file" accept="application/json,.json"></div><div class="card"><h2>A quick introduction</h2><p>How reflection, voice and local storage work.</p><button class="btn secondary" data-action="intro">Replay introduction</button></div><div class="card"><h2>Take your data with you</h2><p>Export your personal reflections, check-ins, practice notes, daily targets, learnings and next steps as JSON. Sample data is excluded.</p><button class="btn secondary" data-action="export">${icon("download")}Export my data</button></div><div class="card"><h2>A fresh start</h2><p>Delete all personal data saved by Equilibrium in this browser. Export first if you want a copy.</p><button class="btn secondary" data-action="clear">Delete all my data</button></div><div class="card"><h2>Voice is your choice</h2><p>Voice capture uses your browser’s speech recognition service, which may send audio to its provider. Permission is requested before capture. Equilibrium retains the transcript only when you save a reflection or add an item, and never stores audio.</p></div><div class="card"><h2>Notifications stay local</h2><p>Daily messages and reminders are scheduled by this browser tab, with no push server. Their text never includes your entries, so nothing personal shows on a lock screen.</p></div><div class="card"><h2>Memory you can see</h2><p>Your saved reflections, practice intention and daily entries are the only personal memory in this version. Edit or remove any of them. There are no hidden personality labels or inferred diagnoses.</p></div></div><div class="card insight"><h2>A companion for reflection</h2><p>Equilibrium offers general reflection and practice tools. It does not diagnose, provide therapy, or establish clinical improvement. Your personal data is not backed up or synced; clearing browser storage removes it.</p></div>`
   );
 }
+// ---------- Today: targets, learnings, next steps ----------
+const days = () => (state.demo ? state.sampleDays : data.days);
+const dayFor = (date) => days()[date] || emptyDay(date);
+const shortDate = (date) =>
+  new Date(date + "T12:00:00").toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+function todayStrip() {
+  const s = dayStatus(days()[localDate()]);
+  return `<button class="today-strip" data-nav="today"><span class="today-icon">${icon("target")}</span><span><strong>Today</strong><small>${s.targets ? `${s.done} of ${s.targets} targets done` : "No targets yet"} · ${s.learnings || s.nextSteps ? "reflection started" : "reflection not added"}</small></span>${icon("arrow")}</button>`;
+}
+function targetRow(t) {
+  const label = esc(t.text);
+  return `<li class="target-row ${t.done === true ? "done" : t.done === false ? "not-done" : ""}"><span class="target-text">${label}</span><span class="target-status" role="group" aria-label="Review: ${label}"><button data-target-status="${esc(t.id)}" data-value="true" aria-pressed="${t.done === true}">${icon("check")}Done</button><button data-target-status="${esc(t.id)}" data-value="false" aria-pressed="${t.done === false}">Not done</button></span><button class="icon-button" data-target-remove="${esc(t.id)}" aria-label="Remove target: ${label}">${icon("close")}</button></li>`;
+}
+function itemList(kind, items, emptyText) {
+  return items.length
+    ? `<ul class="day-items">${items.map((item) => `<li><span>${esc(item.text)}</span><button class="icon-button" data-item-remove="${kind}:${esc(item.id)}" aria-label="Remove: ${esc(item.text)}">${icon("close")}</button></li>`).join("")}</ul>`
+    : `<p class="day-empty">${emptyText}</p>`;
+}
+function capture({ id, label, placeholder, tip, voiceAction, buttons }) {
+  const listening = state.listening === id;
+  return `<div class="capture"><div class="capture-head"><label for="${id}">${label}</label><button type="button" class="voice-mini ${listening ? "listening" : ""}" data-action="${voiceAction}" aria-label="${listening ? "Stop listening" : "Speak instead of typing"}">${icon("mic")}<span id="${id}-voice">${listening ? "Listening · tap to stop" : "Speak"}</span></button></div><textarea id="${id}" maxlength="3000" placeholder="${placeholder}">${esc(id === "target-input" ? state.today.targetText : state.today.reflectText)}</textarea><p class="notice">${tip}</p><div class="capture-actions">${buttons}</div></div>`;
+}
+function targetProposals() {
+  const list = state.today.targetProposals;
+  if (!list.length) return "";
+  return `<div class="proposal-list day-proposals"><p class="caption">Local rules split your words into targets. Edit, add or remove each one; nothing is added until you choose.</p>${list
+    .map(
+      (p, i) =>
+        `<section class="proposal inferred"><div class="proposal-head"><label for="tp-${i}">Target</label>${provenance("local_suggestion")}</div><input id="tp-${i}" data-tp-input="${i}" maxlength="300" value="${esc(p.value)}"><p class="evidence">From: “${esc(p.evidence)}”</p><div class="actions"><button class="btn" data-tp-add="${i}">Add</button><button class="text-button" data-tp-remove="${i}">Remove</button></div></section>`,
+    )
+    .join(
+      "",
+    )}${list.length > 1 ? `<button class="btn secondary" data-action="add-all-targets">Add all ${list.length}</button>` : ""}</div>`;
+}
+const KIND_LABEL = { learning: "Learning", nextStep: "Next step" };
+function reflectProposals() {
+  const list = state.today.reflectProposals;
+  if (!list.length) return "";
+  return `<div class="proposal-list day-proposals"><p class="caption">Local rules sorted your words. Check each one; lines the rules couldn’t place need you to choose.</p>${list
+    .map((p, i) =>
+      p.kind === "done"
+        ? `<section class="proposal inferred"><div class="proposal-head"><span class="proposal-label">Target review</span>${provenance("local_suggestion")}</div><p class="proposal-value">Mark “${esc(p.targetText)}” as <strong>${p.value ? "done" : "not done"}</strong></p><p class="evidence">From: “${esc(p.evidence)}”</p><div class="actions"><button class="btn" data-rp-add="${i}">Confirm</button><button class="text-button" data-rp-remove="${i}">Remove</button></div></section>`
+        : `<section class="proposal ${p.kind ? "inferred" : ""}"><div class="proposal-head"><label for="rp-${i}">${KIND_LABEL[p.kind] || "Not sorted"}</label>${provenance(p.kind ? "local_suggestion" : "user_fact")}</div><input id="rp-${i}" data-rp-input="${i}" maxlength="300" value="${esc(p.value)}">${p.evidence !== p.value ? `<p class="evidence">From: “${esc(p.evidence)}”</p>` : ""}<div class="actions"><select data-rp-kind="${i}" aria-label="Save as"><option value="">Save as…</option>${Object.entries(
+            KIND_LABEL,
+          )
+            .map(
+              ([k, label]) =>
+                `<option value="${k}" ${p.kind === k ? "selected" : ""}>${label}</option>`,
+            )
+            .join(
+              "",
+            )}</select><button class="btn" data-rp-add="${i}" ${p.kind ? "" : "disabled"}>Add</button><button class="text-button" data-rp-remove="${i}">Remove</button></div></section>`,
+    )
+    .join("")}</div>`;
+}
+function weekStrip(date) {
+  return `<div class="day-strip">${Array.from({ length: 7 }, (_, i) =>
+    shiftDate(localDate(), i - 6),
+  )
+    .map((d) => {
+      const s = dayStatus(days()[d]),
+        reflected = s.learnings + s.nextSteps > 0;
+      return `<button data-day="${d}" class="${d === date ? "current" : ""}" ${d === date ? 'aria-current="date"' : ""} aria-label="${shortDate(d)}: ${s.targets ? `${s.done} of ${s.targets} targets done` : "no targets"}${reflected ? ", reflection added" : ""}"><small>${new Date(d + "T12:00:00").toLocaleDateString(undefined, { weekday: "short" })}</small><strong>${s.targets ? `${s.done}/${s.targets}` : "–"}</strong><i class="${reflected ? "on" : ""}" aria-hidden="true"></i></button>`;
+    })
+    .join("")}</div>`;
+}
+function notificationsCard() {
+  const n = data.notifications,
+    supported = "Notification" in window,
+    permission = supported ? Notification.permission : "unsupported",
+    active = n.enabled && permission === "granted",
+    lock = state.demo ? "disabled" : "";
+  const row = (type, label, help) =>
+    `<div class="notify-row"><label class="notify-toggle"><input type="checkbox" data-notify-on="${type}" ${n[type].on ? "checked" : ""} ${lock}><span><strong>${label}</strong><small>${help}</small></span></label><input type="time" data-notify-time="${type}" value="${n[type].time}" aria-label="${label} time" ${lock}></div>`;
+  const status = !supported
+    ? "This browser can’t show notifications."
+    : !window.isSecureContext
+      ? "Notifications need a secure page (https, or this computer’s localhost)."
+      : permission === "denied"
+        ? "Notifications are blocked for this site. Allow them in your browser’s site settings, then reload."
+        : active
+          ? "On. Each one is sent at most once a day."
+          : "Off.";
+  return `<section class="card notify-card" id="notifications"><div class="section-heading"><h2>${icon("bell")}Notifications</h2>${active ? '<span class="tag">ON</span>' : ""}</div><p>${status}${state.demo ? " Settings are locked in sample mode." : ""}</p>${row("quote", "Daily message", "A quote or mindfulness line")}${row("targets", "Target reminder", "Only if no target has been added")}${row("reflection", "Evening reminder", "Only if learnings or next steps are missing")}<div class="actions">${supported && permission !== "denied" && window.isSecureContext ? `<button class="btn ${active ? "secondary" : ""}" data-action="notify-toggle" ${lock}>${active ? "Turn off" : "Turn on notifications"}</button>` : ""}${active ? '<button class="text-button" data-action="notify-test">Send a test</button>' : ""}</div><p class="notice">Sent by this browser, with no server. They arrive while Equilibrium is open in a tab, even in the background; nothing can arrive once it’s closed. A missed one appears when you return, up to ${LATE_WINDOW_MINUTES / 60} hours late. Notification text never includes your entries.</p></section>`;
+}
+function today() {
+  const date = state.todayDate,
+    isToday = date === localDate(),
+    day = dayFor(date),
+    s = dayStatus(day),
+    msg = dailyMessage(date),
+    carry = isToday ? carryOver(days(), date) : [];
+  return (
+    heading(
+      isToday ? "What matters today?" : "Looking back.",
+      isToday
+        ? "Set targets in the morning. Reflect at night."
+        : "Review this day’s targets, learnings and next steps.",
+      isToday ? "TODAY" : "PAST DAY",
+    ) +
+    `<div class="day-nav"><button class="text-button" data-day="${shiftDate(date, -1)}" aria-label="Previous day">←</button><strong>${isToday ? "Today · " : ""}${shortDate(date)}</strong><button class="text-button" data-day="${shiftDate(date, 1)}" aria-label="Next day" ${isToday ? "disabled" : ""}>→</button></div>${weekStrip(date)}<section class="card day-message"><div class="eyebrow">${isToday ? "TODAY’S PAUSE" : "THAT DAY’S PAUSE"}</div><blockquote>${esc(msg.text)}</blockquote>${msg.source ? `<cite>${esc(msg.source)}</cite>` : ""}</section><section class="day-section"><div class="section-heading"><h2>${icon("target")}Targets</h2><span class="tag">${s.targets ? `${s.done} OF ${s.targets} DONE` : "NONE YET"}</span></div><div class="card">${
+      s.targets
+        ? `<ul class="target-list">${day.targets.map(targetRow).join("")}</ul><p class="caption">${s.done} done · ${s.notDone} not done · ${s.unreviewed} not reviewed</p>`
+        : `<p class="day-empty">No targets ${isToday ? "yet" : "recorded for this day"}.</p>`
+    }${
+      carry.length
+        ? `<div class="carry"><h3>Carry over from ${esc(shortDate(carry[0].date))}?</h3><ul>${carry.map((c, i) => `<li><span><small>${c.from}</small>${esc(c.value)}</span><button class="btn secondary" data-carry="${i}" aria-label="Add target: ${esc(c.value)}">${icon("plus")}Add</button></li>`).join("")}</ul></div>`
+        : ""
+    }${capture({
+      id: "target-input",
+      label: isToday ? "What do you want to get done today?" : "Add targets for this day",
+      placeholder: "Finish the launch brief, then call Sam. Also a 20-minute walk.",
+      tip: "Speaking? Say “then” or “next one” between targets.",
+      voiceAction: "voice-targets",
+      buttons:
+        '<button class="btn" data-action="suggest-targets">Suggest targets</button><button class="btn secondary" data-action="add-targets-raw">Add each line as written</button>',
+    })}${targetProposals()}</div></section><section class="day-section"><div class="section-heading"><h2>${icon("moon")}${isToday ? "Tonight" : "That evening"}</h2><span class="tag">${s.learnings + s.nextSteps ? `${s.learnings} · ${s.nextSteps}` : "NOT YET"}</span></div><div class="card"><h3>Learnings</h3>${itemList("learnings", day.learnings, "No learnings added.")}<h3>Next steps</h3>${itemList("nextSteps", day.nextSteps, "No next steps added. They’ll be offered as targets tomorrow.")}${capture({
+      id: "reflect-input",
+      label: "How did the day go?",
+      placeholder: "I learned that… My next step is… I finished… I didn’t get to…",
+      tip: "Try “I learned…”, “Next step…”, and “I finished…” or “I didn’t get to…” to review targets.",
+      voiceAction: "voice-reflect",
+      buttons:
+        '<button class="btn" data-action="sort-reflection">Sort my words</button><button class="btn secondary" data-action="add-learning-raw">Add as learning</button><button class="btn secondary" data-action="add-next-raw">Add as next step</button>',
+    })}${reflectProposals()}</div></section>${notificationsCard()}<p class="footer-note">Not done is information, not a verdict. Unreviewed targets stay unreviewed.</p>`
+  );
+}
+function cacheToday() {
+  try {
+    const t = state.today;
+    sessionStorage.setItem(
+      "equilibrium.today.v1",
+      JSON.stringify({
+        date: localDate(),
+        targetText: t.targetText,
+        reflectText: t.reflectText,
+        targetSource: t.targetSource,
+        reflectSource: t.reflectSource,
+      }),
+    );
+  } catch {}
+}
+const newItem = (text, source) => ({
+  id: makeId(),
+  text: text.trim().slice(0, 300),
+  source,
+  createdAt: new Date().toISOString(),
+});
+// Applies a change to one day, saves, and re-renders. Restores on save failure.
+function updateDay(change, message) {
+  const date = state.todayDate,
+    store = days(),
+    previous = store[date],
+    day = structuredClone(previous || emptyDay(date));
+  change(day);
+  if (!day.targets.length && !day.learnings.length && !day.nextSteps.length)
+    delete store[date];
+  else store[date] = day;
+  if (!state.demo && !persist()) {
+    if (previous) store[date] = previous;
+    else delete store[date];
+  } else if (message) toast(message);
+  render();
+}
+function addTargets(texts, source) {
+  let added = 0,
+    skipped = 0;
+  updateDay((day) => {
+    const existing = new Set(day.targets.map((t) => normalize(t.text)));
+    for (const text of texts) {
+      const key = normalize(text);
+      if (!key || existing.has(key)) {
+        skipped++;
+        continue;
+      }
+      existing.add(key);
+      day.targets.push({ ...newItem(text, source), done: null });
+      added++;
+    }
+  });
+  toast(
+    added
+      ? `${plural(added, "target")} added.${skipped ? ` ${skipped} already listed.` : ""}`
+      : "Already in this day’s targets.",
+  );
+  return added;
+}
+function addItems(kind, texts, source) {
+  updateDay(
+    (day) => day[kind].push(...texts.map((t) => newItem(t, source))),
+    `${plural(texts.length, kind === "learnings" ? "learning" : "next step")} added.`,
+  );
+}
+function clearCapture(which) {
+  state.today[which + "Text"] = "";
+  state.today[which + "Source"] = "text";
+  cacheToday();
+}
+function todayAction(a) {
+  const t = state.today;
+  if (a === "voice-targets" || a === "voice-reflect") {
+    const which = a === "voice-targets" ? "target" : "reflect";
+    return voice({
+      field: which + "-input",
+      idle: "Speak",
+      consent:
+        "Your browser may send audio to its speech provider. Equilibrium stores no audio. Only words you review and add are saved.",
+      onText: (text) => {
+        t[which + "Text"] = text;
+        t[which + "Source"] = "voice";
+        cacheToday();
+      },
+    });
+  }
+  if (a === "suggest-targets" || a === "add-targets-raw") {
+    const text = $("#target-input")?.value ?? t.targetText;
+    if (!text.trim()) {
+      toast("Say or type a target first.");
+      return $("#target-input")?.focus();
+    }
+    if (a === "add-targets-raw") {
+      if (addTargets(splitLines(text), t.targetSource)) clearCapture("target");
+      return render();
+    }
+    const existing = new Set(dayFor(state.todayDate).targets.map((x) => normalize(x.text)));
+    t.targetProposals = splitTargets(text)
+      .filter((p) => !existing.has(normalize(p.value)))
+      .map((p) => ({ ...p, source: t.targetSource }));
+    if (!t.targetProposals.length)
+      return toast("No new targets found. Try “then” between them, or add each line as written.");
+    clearCapture("target");
+    render();
+    document.querySelector(".day-proposals")?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  if (a === "add-all-targets") {
+    const list = t.targetProposals.filter((p) => p.value.trim());
+    t.targetProposals = [];
+    return addTargets(
+      list.map((p) => p.value),
+      list[0]?.source || "text",
+    );
+  }
+  if (a === "sort-reflection" || a === "add-learning-raw" || a === "add-next-raw") {
+    const text = $("#reflect-input")?.value ?? t.reflectText;
+    if (!text.trim()) {
+      toast("Say or type something about the day first.");
+      return $("#reflect-input")?.focus();
+    }
+    if (a !== "sort-reflection") {
+      addItems(a === "add-learning-raw" ? "learnings" : "nextSteps", splitLines(text), t.reflectSource);
+      clearCapture("reflect");
+      return render();
+    }
+    t.reflectProposals = sortReflection(text, dayFor(state.todayDate).targets).map((p) => ({
+      ...p,
+      source: t.reflectSource,
+    }));
+    if (!t.reflectProposals.length) return toast("Nothing to sort yet. Add a few more words.");
+    clearCapture("reflect");
+    render();
+    document.querySelector(".day-proposals")?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  if (a === "notify-toggle") return toggleNotifications();
+  if (a === "notify-test")
+    return deliver({
+      type: "test",
+      title: "Notifications are on",
+      body: "This is how Equilibrium’s daily message and reminders will appear.",
+    }).then((ok) => toast(ok ? "Test sent." : "This browser didn’t show the notification."));
+}
+function bindToday() {
+  const t = state.today;
+  for (const [id, which] of [
+    ["target-input", "target"],
+    ["reflect-input", "reflect"],
+  ]) {
+    const el = $("#" + id);
+    if (el)
+      el.oninput = () => {
+        t[which + "Text"] = el.value;
+        if (!el.value) t[which + "Source"] = "text";
+        cacheToday();
+      };
+  }
+  const each = (sel, fn) => document.querySelectorAll(sel).forEach(fn);
+  each("[data-tp-input]", (el) => (el.oninput = () => (t.targetProposals[+el.dataset.tpInput].value = el.value)));
+  each("[data-rp-input]", (el) => (el.oninput = () => (t.reflectProposals[+el.dataset.rpInput].value = el.value)));
+  each(
+    "[data-rp-kind]",
+    (el) =>
+      (el.onchange = () => {
+        t.reflectProposals[+el.dataset.rpKind].kind = el.value || null;
+        render();
+      }),
+  );
+  each(
+    "[data-tp-remove]",
+    (b) =>
+      (b.onclick = () => {
+        t.targetProposals.splice(+b.dataset.tpRemove, 1);
+        render();
+      }),
+  );
+  each(
+    "[data-rp-remove]",
+    (b) =>
+      (b.onclick = () => {
+        t.reflectProposals.splice(+b.dataset.rpRemove, 1);
+        render();
+      }),
+  );
+  each(
+    "[data-tp-add]",
+    (b) =>
+      (b.onclick = () => {
+        const i = +b.dataset.tpAdd,
+          p = t.targetProposals[i];
+        if (!p.value.trim()) return toast("Write the target first, or remove it.");
+        t.targetProposals.splice(i, 1);
+        addTargets([p.value], p.source);
+      }),
+  );
+  each(
+    "[data-rp-add]",
+    (b) =>
+      (b.onclick = () => {
+        const i = +b.dataset.rpAdd,
+          p = t.reflectProposals[i];
+        if (p.kind === "done") {
+          t.reflectProposals.splice(i, 1);
+          if (!dayFor(state.todayDate).targets.some((x) => x.id === p.targetId))
+            return render(), toast("That target is no longer in the list.");
+          return updateDay(
+            (day) => (day.targets.find((x) => x.id === p.targetId).done = p.value),
+            `Marked ${p.value ? "done" : "not done"}.`,
+          );
+        }
+        if (!p.kind || !p.value.trim()) return;
+        t.reflectProposals.splice(i, 1);
+        addItems(p.kind === "learning" ? "learnings" : "nextSteps", [p.value], p.source);
+      }),
+  );
+  each(
+    "[data-carry]",
+    (b) =>
+      (b.onclick = () => {
+        const c = carryOver(days(), state.todayDate)[+b.dataset.carry];
+        if (c) addTargets([c.value], "carryover");
+      }),
+  );
+  each(
+    "[data-target-status]",
+    (b) =>
+      (b.onclick = () => {
+        const value = b.dataset.value === "true";
+        updateDay((day) => {
+          const target = day.targets.find((x) => x.id === b.dataset.targetStatus);
+          // Tapping the selected answer again returns it to "not reviewed".
+          if (target) target.done = target.done === value ? null : value;
+        });
+      }),
+  );
+  each(
+    "[data-target-remove]",
+    (b) =>
+      (b.onclick = () =>
+        updateDay(
+          (day) => (day.targets = day.targets.filter((x) => x.id !== b.dataset.targetRemove)),
+          "Target removed.",
+        )),
+  );
+  each(
+    "[data-item-remove]",
+    (b) =>
+      (b.onclick = () => {
+        const [kind, id] = b.dataset.itemRemove.split(":");
+        updateDay((day) => (day[kind] = day[kind].filter((x) => x.id !== id)), "Removed.");
+      }),
+  );
+  each(
+    "[data-day]",
+    (b) =>
+      (b.onclick = () =>
+        navigate("today", {
+          date: b.dataset.day >= localDate() ? undefined : b.dataset.day,
+        })),
+  );
+  each(
+    "[data-notify-on]",
+    (el) =>
+      (el.onchange = () => {
+        data.notifications[el.dataset.notifyOn].on = el.checked;
+        persist();
+      }),
+  );
+  each(
+    "[data-notify-time]",
+    (el) =>
+      (el.onchange = () => {
+        if (!TIME_RE.test(el.value)) return toast("Choose a time like 08:00.");
+        data.notifications[el.dataset.notifyTime].time = el.value;
+        if (persist()) toast("Time saved.");
+      }),
+  );
+}
+
+// ---------- Notifications ----------
+// Local only: the page checks every 30 seconds while it is open and shows a
+// system notification through the service worker (needed on Android) or the
+// Notification constructor. No push server is involved.
+let swRegistration = null,
+  checking = false;
+function registerWorker() {
+  if (!navigator.serviceWorker || !window.isSecureContext) return;
+  try {
+    navigator.serviceWorker
+      .register("/sw.js")
+      .then((r) => (swRegistration = r))
+      .catch(() => {});
+    navigator.serviceWorker.addEventListener("message", (e) => {
+      if (e.data?.type === "open-today") navigate("today");
+    });
+  } catch {}
+}
+async function deliver(n) {
+  const options = {
+    body: n.body,
+    tag: "equilibrium-" + n.type,
+    data: { url: "/#/today" },
+  };
+  try {
+    const reg =
+      swRegistration || (await navigator.serviceWorker?.getRegistration());
+    if (reg) {
+      await reg.showNotification(n.title, options);
+      return true;
+    }
+  } catch {}
+  try {
+    const note = new Notification(n.title, options);
+    note.onclick = () => {
+      window.focus();
+      note.close();
+      navigate("today");
+    };
+    return true;
+  } catch {
+    return false;
+  }
+}
+async function checkNotifications() {
+  if (
+    checking ||
+    !("Notification" in window) ||
+    Notification.permission !== "granted" ||
+    !data.notifications.enabled
+  )
+    return;
+  checking = true;
+  try {
+    const date = localDate(),
+      sent = data.notifications.sent[date] || [];
+    const due = dueNotifications({
+      now: new Date(),
+      date,
+      day: data.days[date],
+      settings: data.notifications,
+      sent,
+    });
+    if (!due.length) return;
+    const delivered = [];
+    for (const n of due) if (await deliver(n)) delivered.push(n.type);
+    if (!delivered.length) return;
+    data.notifications.sent = pruneSent(
+      mergeSent(data.notifications.sent, { [date]: delivered }),
+      date,
+    );
+    persist();
+  } finally {
+    checking = false;
+  }
+}
+async function toggleNotifications() {
+  if (state.demo) return;
+  if (data.notifications.enabled && Notification.permission === "granted") {
+    data.notifications.enabled = false;
+    if (persist()) toast("Notifications turned off.");
+    return render();
+  }
+  let permission = Notification.permission;
+  try {
+    if (permission === "default")
+      permission = await Notification.requestPermission();
+  } catch {}
+  if (permission !== "granted") {
+    render();
+    return toast("Notifications weren’t allowed. You can change this in your browser’s site settings.");
+  }
+  data.notifications.enabled = true;
+  if (persist()) {
+    render();
+    toast("Notifications are on.");
+    checkNotifications();
+  }
+}
+
 function render() {
   const pages = {
     home,
@@ -453,6 +1033,7 @@ function render() {
     reflect,
     detail,
     privacy,
+    today,
   };
   $("#app").innerHTML = layout((pages[state.page] || home)());
   bind();
@@ -667,6 +1248,7 @@ function bind() {
     .querySelectorAll("[data-sos-outcome]")
     .forEach((b) => (b.onclick = () => saveSOS(b.dataset.sosOutcome)));
   if ($("#import-file")) $("#import-file").onchange = importBackup;
+  if (state.page === "today") bindToday();
   document
     .querySelectorAll("input[maxlength],textarea[maxlength]")
     .forEach((input) => {
@@ -696,7 +1278,20 @@ function bind() {
       update();
     });
 }
+const TODAY_ACTIONS = new Set([
+  "voice-targets",
+  "voice-reflect",
+  "suggest-targets",
+  "add-targets-raw",
+  "add-all-targets",
+  "sort-reflection",
+  "add-learning-raw",
+  "add-next-raw",
+  "notify-toggle",
+  "notify-test",
+]);
 function action(a) {
+  if (TODAY_ACTIONS.has(a)) return todayAction(a);
   if (a === "new") return newReflection();
   if (a === "toggle-demo") {
     const change = () => {
@@ -876,20 +1471,13 @@ function action(a) {
   if (a === "clear")
     return modal(
       "Delete all personal data?",
-      "Export a copy first if you need one. This clears personal moments, check-ins and practice notes from this browser.",
+      "Export a copy first if you need one. This clears personal moments, check-ins, practice notes, daily targets, learnings, next steps and notification settings from this browser.",
       "Delete all",
       () => {
         try {
           localStorage.removeItem(STORAGE);
           clearDraft();
-          data = {
-            schemaVersion: 2,
-            records: [],
-            checkins: [],
-            goal: "",
-            practice: "",
-            onboarded: true,
-          };
+          data = { ...freshData(), onboarded: true };
           persist();
           render();
           toast("Personal data deleted.");
@@ -899,25 +1487,51 @@ function action(a) {
       },
       true,
     );
-  if (a === "voice") return voice();
+  if (a === "voice")
+    return voice({
+      field: "narrative",
+      label: "voice-label",
+      onText: (text) => {
+        state.draft.narrative = text;
+        state.draft.source = "voice";
+        state.dirty = true;
+        cacheDraft();
+      },
+    });
 }
-function voice() {
+// Browser speech recognition, written into a textarea. Consent is asked every
+// time. `onText` receives the final (not interim) transcript so far.
+function voice({
+  field,
+  label = field + "-voice",
+  idle = "Tap to speak",
+  consent = "Your browser may send audio to its speech provider. Equilibrium stores no audio. Only words you review and save become a reflection.",
+  onText,
+}) {
   if (recognition) {
     recognition.stop();
     return;
   }
   const Speech = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!Speech) {
-    toast("Voice is unavailable in this browser. You can type below.");
-    $("#narrative")?.focus();
+    toast("Voice is unavailable in this browser. You can type instead.");
+    $("#" + field)?.focus();
     return;
   }
+  const setLabel = (text, on) => {
+    const el = $("#" + label);
+    if (el) el.textContent = text;
+    el?.closest("button")?.classList.toggle("listening", on);
+  };
   const start = () => {
+    const el = $("#" + field);
+    if (!el) return;
+    const max = el.maxLength > 0 ? el.maxLength : 10000;
     recognition = new Speech();
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = navigator.language || "en-US";
-    let finalText = $("#narrative").value;
+    let finalText = el.value;
     recognition.onresult = (e) => {
       let interim = "";
       for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -925,25 +1539,23 @@ function voice() {
         if (e.results[i].isFinal) finalText += (finalText ? " " : "") + text;
         else interim += text;
       }
-      if ($("#narrative")) {
-        $("#narrative").value = (finalText + " " + interim)
-          .trim()
-          .slice(0, 10000);
-        state.draft.narrative = finalText.slice(0, 10000);
-        state.draft.source = "voice";
-        state.dirty = true;
-        cacheDraft();
+      const target = $("#" + field);
+      if (target) {
+        target.value = (finalText + " " + interim).trim().slice(0, max);
+        onText(finalText.slice(0, max));
       }
     };
     recognition.onerror = () =>
       toast("Voice capture stopped. Continue by typing.");
     recognition.onend = () => {
       recognition = null;
-      if ($("#voice-label")) $("#voice-label").textContent = "Tap to speak";
+      state.listening = null;
+      setLabel(idle, false);
     };
     try {
       recognition.start();
-      $("#voice-label").textContent = "Listening · tap to stop";
+      state.listening = field;
+      setLabel("Listening · tap to stop", true);
     } catch {
       recognition = null;
       toast("Could not start voice. You can type instead.");
@@ -951,7 +1563,7 @@ function voice() {
   };
   modal(
     "Use your browser’s voice service?",
-    "Your browser may send audio to its speech provider. Equilibrium stores no audio. Only words you review and save become a reflection.",
+    consent,
     "Start voice capture",
     start,
   );
@@ -1107,6 +1719,19 @@ function applyRoute() {
   }
   if (route.page === "sos" && !["saved", "outcome"].includes(state.sosMode))
     state.sosMode = "idle";
+  if (route.page === "today") {
+    const date =
+      route.date && route.date <= localDate() ? route.date : localDate();
+    if (route.date && date !== route.date)
+      window.history.replaceState(null, "", toHash({ page: "today" }));
+    // Suggestions are tied to one day's targets; unsent text is kept.
+    if (state.today.date !== date) {
+      state.today.targetProposals = [];
+      state.today.reflectProposals = [];
+      state.today.date = date;
+    }
+    state.todayDate = date;
+  }
   lastHash = location.hash;
   render();
   window.scrollTo(0, 0);
@@ -1281,9 +1906,11 @@ async function importBackup(e) {
       )
     )
       throw Error("Invalid check-in dates.");
+    const incomingDays = validateDays(incoming.days);
+    const dayCount = Object.keys(incomingDays).length;
     modal(
       "Import this backup?",
-      `Merge ${incoming.records.length} moments. Existing moments with the same ID will be kept. Existing practice notes stay; empty notes are filled from the backup.`,
+      `Merge ${incoming.records.length} moments${dayCount ? ` and ${plural(dayCount, "day")} of targets and reflections` : ""}. Existing moments and items with the same ID will be kept. Existing practice notes stay; empty notes are filled from the backup. Notification settings are not changed.`,
       "Merge backup",
       () => {
         const ids = new Set(data.records.map((r) => r.id));
@@ -1291,6 +1918,7 @@ async function importBackup(e) {
           ...incoming.records.filter((r) => !ids.has(r.id)).map(migrateRecord),
         );
         data.checkins = [...new Set([...data.checkins, ...incoming.checkins])];
+        data.days = mergeDays(data.days, incomingDays);
         if (!data.goal && typeof incoming.goal === "string")
           data.goal = incoming.goal;
         if (!data.practice && typeof incoming.practice === "string")
@@ -1330,6 +1958,37 @@ window.addEventListener("hashchange", () => {
 if (!location.hash) window.history.replaceState(null, "", "#/home");
 applyRoute();
 if (!data.onboarded) showIntro();
+// Another tab saved: reload so this tab never writes stale data over it.
+window.addEventListener("storage", (e) => {
+  if (e.key !== STORAGE || e.newValue == null) return;
+  try {
+    const saved = JSON.parse(e.newValue);
+    if (!saved || !Array.isArray(saved.records) || !Array.isArray(saved.checkins))
+      return;
+    data = loadData(saved);
+    if (
+      state.page !== "reflect" &&
+      !document.activeElement?.matches("input, textarea, select") &&
+      !$("#dialog").open
+    )
+      render();
+  } catch {}
+});
+setInterval(() => {
+  // Roll the Today page over at midnight.
+  if (
+    state.page === "today" &&
+    !parseRoute(location.hash).date &&
+    state.todayDate !== localDate()
+  )
+    applyRoute();
+  checkNotifications();
+}, 30_000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) checkNotifications();
+});
+registerWorker();
+checkNotifications();
 
 function makeId() {
   if (crypto.randomUUID) return crypto.randomUUID();

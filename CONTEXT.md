@@ -2,7 +2,7 @@
 
 ## Current state
 
-_Last updated 2026-11-01 06:53 IST by Claude Code (Opus 5.5) · Shivank's Mac mini_
+_Last updated 2026-11-04 08:09 IST by Claude Code · cloud session_
 
 **What it is.** A local-only reflection app for noticing and handling
 triggered moments. An "I'm triggered" SOS entry (scripts, one-minute
@@ -11,6 +11,15 @@ emergency guidance), voice-or-type capture where conservative local rules
 propose fields that the user must confirm, short follow-ups on goal and
 pause, a story timeline, progress metrics that count missing data openly,
 and JSON export/import. No account, no API key, no remote AI.
+
+**Today tab** (added 2026-11-04, branch `feat/today-targets`): daily targets
+in the morning, learnings and next steps at night, by voice or typing. Local
+rules (`dist/daily.js`) split spoken lists and sort evening speech; every
+suggestion is confirmed. Optional local notifications: daily quote/mindfulness
+message, a target reminder if none added, an evening reminder if learnings or
+next steps are missing. Web notifications only arrive while a tab is open
+(no push server by design); reliable closed-app reminders need the native iOS
+app's local notifications.
 
 Two front ends:
 - **Web** (`dist/`, hand-written, no build step), served by `server.mjs` on
@@ -39,9 +48,10 @@ and local `main` is stale at the initial commit.
 equilibrium-v1/
 ├── CONTEXT.md, AGENTS.md, CLAUDE.md, README.md
 ├── dist/          the web app source: app.js (UI), model.js (data, routes),
-│                  ai.js (local rule-based extractor, not AI), styles.css
+│                  ai.js (local rule-based extractor, not AI), styles.css,
+│                  daily.js (Today tab logic), messages.js, sw.js
 ├── server.mjs     loopback static server with strict CSP
-├── tests/         node:test suites (16 cases)
+├── tests/         node:test suites (36 cases)
 ├── ios/           SwiftUI app + XcodeGen project.yml (uncommitted)
 ├── docs/
 │   ├── engineering/IMPLEMENTATION.md   schema v2 and the UX decisions applied
@@ -56,7 +66,7 @@ Native iOS first version (not committed).
 
 **Deliberately out.** Remote extraction or model choice, automated safety
 classification, region-specific crisis numbers and call actions, four-week
-trend thresholds, reminders, role-play, formal accessibility and usability
+trend thresholds, push notifications via a server, role-play, formal accessibility and usability
 audits. The app must not be relied on to detect or manage emergencies.
 
 **Open questions.**
@@ -69,7 +79,14 @@ audits. The app must not be relied on to detect or manage emergencies.
 - The UX handoff and mockups the build was based on aren't in the repo; they
   would belong in `docs/design/`.
 
-**Next.** Land the iOS app via a new branch and PR; fix the import dedupe.
+- Should the Today tab also come to the iOS app? That is where reminders can
+  arrive with the app closed (UNUserNotificationCenter, still no server).
+- Real microphone and real OS notification display are untested for the
+  Today tab (headless browser can do neither).
+
+**Next.** Review and merge `feat/today-targets`; try it on a real browser with
+the mic and notifications; land the iOS app via a new branch and PR; fix the
+import dedupe.
 
 ## Log
 
@@ -97,4 +114,19 @@ branch state. The uncommitted `ios/` folder and README change were left
 alone.
 **Decided:** Committed on the current branch as asked, even though it is
 already merged; these files will need to reach `main` with the iOS work.
+**Next:** See "Next" above.
+
+### 2026-11-04 08:09 IST — Claude Code · cloud session
+**Changed:** Added the Today tab: `dist/daily.js` (target splitting,
+reflection sorting, target matching, carry-over, message rotation,
+notification timing, backup validate/merge), `dist/messages.js`,
+`dist/sw.js` (notification clicks only), UI in `app.js`, styles, `#/today`
+routes, 20 new tests. Refactored `voice()` to serve any textarea. Added a
+`storage` listener so tabs reload each other's saves. Export/import/clear
+cover daily entries.
+**Decided:** Built inside Equilibrium rather than as a separate app, since it
+shares the local-only rules, storage and voice consent. Web notifications are
+page-scheduled with a 3-hour late window, and carry no personal text.
+Unreviewed targets stay null and are never carried over as "not done".
+Typed lines can be added as written; only extracted splits need confirmation.
 **Next:** See "Next" above.

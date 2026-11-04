@@ -226,6 +226,10 @@ export function parseRoute(hash) {
       };
     if (parts[0] === "learn" && parts[1])
       return { page: "lesson", id: parts[1] };
+    if (parts[0] === "today")
+      return /^\d{4}-\d{2}-\d{2}$/.test(parts[1] || "")
+        ? { page: "today", date: parts[1] }
+        : { page: "today" };
     if (["home", "sos", "progress", "learn", "privacy"].includes(parts[0]))
       return { page: parts[0] };
     return { page: "home" };
@@ -234,7 +238,8 @@ export function parseRoute(hash) {
   }
 }
 export function toHash(route) {
-  const { page, id, step } = route;
+  const { page, id, step, date } = route;
+  if (page === "today") return "#/today" + (date ? "/" + date : "");
   if (page === "history") return "#/reflections";
   if (page === "detail") return "#/reflections/" + encodeURIComponent(id);
   if (page === "reflect")

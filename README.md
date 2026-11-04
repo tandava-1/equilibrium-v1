@@ -20,6 +20,8 @@ npm test
 
 ## Implemented UX
 
+- **Today** tab for daily targets and nightly learnings and next steps. Speak or type; local rules split a spoken list into targets and sort evening speech into learnings, next steps and target reviews (“I finished the report”). Each suggestion is confirmed individually. Targets are Done, Not done or left unreviewed. Last night’s next steps and explicitly not-done targets are offered as carry-over the next morning. A seven-day strip and previous-day view show history.
+- Optional local notifications: a daily quote or mindfulness message, a target reminder if no target has been added, and an evening reminder if learnings or next steps are missing. Each fires at most once a day at a time you choose.
 - Prominent “I’m triggered” entry; SOS scripts first, with script navigation, one-minute breathing, five-step grounding, ten-minute step-away timer, visible emergency guidance and optional outcome capture.
 - Voice-or-type capture; conservative local text rules propose fields with evidence and provenance. Each proposal requires confirmation; unaccepted fields remain absent.
 - Up to three short follow-up screens for goal, goal alignment and pause, followed by a full review and optional editor.
@@ -33,11 +35,13 @@ npm test
 
 ## Data and limitations
 
-Personal data remains in this browser/origin's localStorage, under `equilibrium.local.v1`, with schemaVersion 2. Existing records are migrated in memory without losing original fields. Drafts use sessionStorage (`equilibrium.draft.v1`) and clear on save/discard. Both stores are unencrypted by this app; they are not synced or backed up. Export before clearing browser data. Sensitive drafts can remain until discarded or the browser session ends.
+Personal data remains in this browser/origin's localStorage, under `equilibrium.local.v1`, with schemaVersion 2. Daily entries live under `days` (keyed by local date) and notification settings under `notifications`; both are included in export, and import merges days by item ID. Existing records are migrated in memory without losing original fields. Drafts use sessionStorage (`equilibrium.draft.v1`) and clear on save/discard. Both stores are unencrypted by this app; they are not synced or backed up. Export before clearing browser data. Sensitive drafts can remain until discarded or the browser session ends.
 
 Voice uses browser SpeechRecognition, with explicit consent each time. Its provider may process audio remotely. Equilibrium never stores audio. Typed capture and local suggestions make no network requests. Local rules are not a live AI model and can miss or misinterpret language; confirmation remains essential.
 
-No remote AI, account system, diagnosis, automated crisis detection, notifications, or clinical evaluation is included. Emergency guidance is visible but has no region-specific phone number or callable hotline pending region/resource configuration. The app must not be relied upon to detect or manage emergencies.
+Notifications are scheduled by the open page (checked every 30 seconds) and shown through a minimal service worker (`sw.js`, notification clicks only; no fetch handler or caching). There is no push server, so nothing can arrive while every Equilibrium tab is closed; a missed notification appears on return if it is within 3 hours of its time. Notification text never contains personal entries. Browsers require a secure context (https or localhost); iOS Safari only allows web notifications for sites added to the Home Screen.
+
+No remote AI, account system, diagnosis, automated crisis detection, push service, or clinical evaluation is included. Emergency guidance is visible but has no region-specific phone number or callable hotline pending region/resource configuration. The app must not be relied upon to detect or manage emergencies.
 
 ## Metrics
 
@@ -45,11 +49,11 @@ Constructive-response rate uses incidents with a response goal and explicit yes/
 
 ## Verification
 
-16 node:test cases cover missingness, zero recovery, medians, relevance, North Star eligibility, routes, migration, local extraction, date windows and SOS deduplication. Browser checks exercised phone capture/confirmation/follow-ups/save, draft reload, browser Back, SOS grounding/breathing/outcomes, and phone/desktop progress. Microphone audio capture and real device phone calling were not tested. No automated accessibility audit or pilot usability study was run.
+36 node:test cases cover missingness, zero recovery, medians, relevance, North Star eligibility, routes, migration, local extraction, date windows and SOS deduplication, plus target splitting, reflection sorting, target matching, carry-over, message rotation, notification timing and backup merge for the Today tab. A scripted Chromium run (with a stand-in speech recognizer and a controlled clock) exercised a full day: spoken targets, the 08:00 message, a suppressed target reminder, the 21:00 reminder, sorted evening speech and next-morning carry-over. Real speech recognition and real OS notification display were not tested (headless Chromium supports neither). Browser checks exercised phone capture/confirmation/follow-ups/save, draft reload, browser Back, SOS grounding/breathing/outcomes, and phone/desktop progress. Microphone audio capture and real device phone calling were not tested. No automated accessibility audit or pilot usability study was run.
 
 ## Source
 
-`dist/` is the source; there is no build step. `app.js` handles UI; `model.js` contains data and route helpers; `ai.js` is the local rule-based extractor (despite its integration-oriented filename). `styles.css` contains responsive design. `server.mjs` serves on loopback only and restricts assets and scripts to the same origin.
+`dist/` is the source; there is no build step. `app.js` handles UI; `model.js` contains data and route helpers; `ai.js` is the local rule-based extractor (despite its integration-oriented filename). `daily.js` holds the Today tab's pure logic (also local rules, not AI) and `messages.js` its daily messages; quotes name their source and translation. `styles.css` contains responsive design. `server.mjs` serves on loopback only and restricts assets and scripts to the same origin.
 
 ## Network access
 
